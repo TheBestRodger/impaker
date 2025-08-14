@@ -3,10 +3,14 @@ import os, socket, threading, socketserver, struct
 from impacket.smbserver import SimpleSMBServer
 from impacket.dcerpc.v5 import rpcrt
 from impacket.ntlm import compute_lmhash, compute_nthash
+from impacket.uuid import uuidtup_to_bin
+
+MSRPC_STANDARD_NDR_SYNTAX = ('8A885D04-1CEB-11C9-9FE8-08002B104860', '2.0')
+
 
 class RPCPipeTCPHandler(socketserver.BaseRequestHandler):
     NAME = r"\unknown"
-
+    
     def handle(self):
         peer = f"{self.client_address[0]}:{self.client_address[1]}"
         print(f"[TCP {self.NAME}] client connected: {peer}")
@@ -27,32 +31,26 @@ class RPCPipeTCPHandler(socketserver.BaseRequestHandler):
                 print(f"[TCP {self.NAME}] <- PDU type={ms['type']} len={ms['frag_len']}")
 
                 if ms['type'] == rpcrt.MSRPC_BIND:
-                    # BIND_ACK
-                    ack = rpcrt.MSRPCBindAck()
-                    ack['max_tfrag'] = 4280
-                    ack['assoc_group'] = 0
-                    # принимаем NDR32
-                    ctx = rpcrt.MSRPC_CONT_RESULT_ACCEPT
-                    ctx['ack_result'] = 0
-                    ctx['ack_reason'] = 0
-                    ctx['transfer_syntax'] = rpcrt.MSRPC_UUID_SYNTAX_NDR
-                    ack.setCtxItems([ctx])
-                    pkt = ack.get_packet()
+                    pkt = self._build_bind_ack(hdr, body)
                     self.request.sendall(pkt)
                     print(f"[TCP {self.NAME}] -> BIND_ACK")
                     continue
 
                 if ms['type'] == rpcrt.MSRPC_REQUEST:
                     req = rpcrt.MSRPCRequestHeader(pdu)
-                    print(
+                    print
+                    (
                         f"[TCP {self.NAME}] REQUEST opnum={req['op_num']} ctx_id={req['ctx_id']}"
                     )
+
                     fault = rpcrt.MSRPCRespHeader()
                     fault['type'] = rpcrt.MSRPC_FAULT
                     fault['ctx_id'] = req['ctx_id']
-                    fault['pduData'] = struct.pack(
+                    fault['pduData'] = struct.pack
+                    (
                         '<L', rpcrt.rpc_status_codes['nca_s_op_rng_error']
                     )
+
                     pkt = fault.get_packet()
                     self.request.sendall(pkt)
                     print(f"[TCP {self.NAME}] -> FAULT")
@@ -62,6 +60,91 @@ class RPCPipeTCPHandler(socketserver.BaseRequestHandler):
             print(f"[TCP {self.NAME}] error: {e}")
         finally:
             print(f"[TCP {self.NAME}] client closed: {peer}")
+    
+    def _build_bind_ack(self, ms, body) -> bytes:
+ 
+        bind = rpcrt.MSRPCBind(bytes(ms) + body)
+        ack = rpcrt.MSRPCBindAck()
+
+        # Заголовок
+        ack['type']    = rpcrt.MSRPC_BINDACK
+        # echo флаги и call_id, как пришли
+        #ack['flags']   = ms['flags']
+        #ack['call_id'] = ms['call_id']
+
+        # Фрагменты
+        for dst, src in (('max_tfrag','max_xmit_frag'), ('max_rfrag','max_recv_frag')):
+            try:
+                ack[dst] = bind[src]
+            except Exception:
+                ack[dst] = 4280
+
+        ack['assoc_group'] = 0
+
+        try:
+            ack['SecondaryAddr'] = b'\x00'   # строка длины 1 с NUL
+            ack['SecondaryAddrLen'] = 1
+        except KeyError:
+            ack['sec_addr'] = b'\x00'
+            ack['sec_addr_len'] = 1
+
+        # Контексты: принимаем только NDR32
+        ndr32 = uuidtup_to_bin(MSRPC_STANDARD_NDR_SYNTAX)
+
+        try:
+            ctx_items = bind.getCtxItems()     # предпочтительно, если есть
+        except Exception:
+            # запасной путь
+            ctx_items = []
+            blob = bind['ctx_items']
+            cnt  = int(bind['ctx_num'])
+            off  = 0
+            for _ in range(3):
+                item = rpcrt.CtxItem(blob[off:])
+                ctx_items.append(item)
+                off += len(item)
+
+        results_blob = b''
+        ctx_count    = 0
+        for item in ctx_items:
+            res = rpcrt.CtxItemResult()
+            # если клиент предложил не NDR32
+            if item['TransferSyntax'] != ndr32:
+                res['Result'] = rpcrt.MSRPC_CONT_RESULT_PROV_REJECT
+                res['Reason'] = 2 
+                res['TransferSyntax'] = ndr32
+            else:
+                res['Result'] = rpcrt.MSRPC_CONT_RESULT_ACCEPT
+                res['Reason'] = 0
+                res['TransferSyntax'] = ndr32
+
+            results_blob += res.getData()
+            ctx_count    += 1
+
+        # Если клиент прислал 0 контекстов, вернём 1 accept NDR32
+        if ctx_count == 0:
+            res = rpcrt.CtxItemResult()
+            res['Result'] = rpcrt.MSRPC_CONT_RESULT_ACCEPT
+            res['Reason'] = 0
+            res['TransferSyntax'] = ndr32
+            results_blob = res.getData()
+            ctx_count    = 1
+
+        ack['ctx_num']   = ctx_count
+        ack['ctx_items'] = results_blob
+
+        try:
+            base_size = rpcrt.MSRPCBindAck._SIZE
+            sec_len   = ack['SecondaryAddrLen']
+        except KeyError:
+            base_size = rpcrt.MSRPCBindAck._SIZE
+            sec_len   = ack['sec_addr_len']
+
+        pad_len   = (4 - ((base_size + sec_len) % 4)) % 4
+        ack['Pad'] = b'\x00' * pad_len
+
+        # Итоговый пакет
+        return ack.get_packet()
 
     def _recv_exact(self, n):
         buf = b""
@@ -72,6 +155,7 @@ class RPCPipeTCPHandler(socketserver.BaseRequestHandler):
             buf += chunk
         return buf
 
+# без этого вообще не откроются pipe lsa net samr
 def start_pipe_backend(name, host, port):
     class _H(RPCPipeTCPHandler):
         NAME = name
@@ -84,8 +168,6 @@ def start_pipe_backend(name, host, port):
 
 def main():
     srv = SimpleSMBServer(listenAddress="0.0.0.0", listenPort=445)
-
-    # IPC$ обязателен    srv.addShare("IPC$", os.getcwd(), "IPC")
 
     # SMB2
     try:
@@ -101,6 +183,7 @@ def main():
 
     lm = compute_lmhash("Mos123098!")
     nt = compute_nthash("Mos123098!")
+
     for i, name in enumerate([r"AD\d.kalikin", r"AD.LOCAL\d.kalikin", "d.kalikin"], start=1001):
         try:
             srv.addCredential(name, i, lm, nt)
@@ -108,9 +191,9 @@ def main():
             srv.addCredential(name, i, lm.hex(), nt.hex())
 
     # Поднять локальные TCP-бекенды для пайпов
-    lsa_host, lsa_port = "127.0.0.1", 49152
-    samr_host, samr_port = "127.0.0.1", 49153
-    netlogon_host, netlogon_port = "127.0.0.1", 49154
+    lsa_host, lsa_port              = "127.0.0.1", 49152
+    samr_host, samr_port            = "127.0.0.1", 49153
+    netlogon_host, netlogon_port    = "127.0.0.1", 49154
 
     start_pipe_backend(r"\lsarpc",   lsa_host,   lsa_port)
     start_pipe_backend(r"\samr",     samr_host,  samr_port)
