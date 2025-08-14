@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-import os, socket, threading, socketserver
+import os, socket, threading, socketserver, struct
 from impacket.smbserver import SimpleSMBServer
-from impacket.dcerpc.v5 import rpcrt, lsad, samr, nrpc
+from impacket.dcerpc.v5 import rpcrt
 from impacket.ntlm import compute_lmhash, compute_nthash
 
 class RPCPipeTCPHandler(socketserver.BaseRequestHandler):
@@ -23,7 +23,7 @@ class RPCPipeTCPHandler(socketserver.BaseRequestHandler):
                     break
 
                 body = self._recv_exact(ms['frag_len'] - len(ms))
-                #data = bytes(ms) + body
+                pdu = hdr + body
                 print(f"[TCP {self.NAME}] <- PDU type={ms['type']} len={ms['frag_len']}")
 
                 if ms['type'] == rpcrt.MSRPC_BIND:
@@ -43,11 +43,16 @@ class RPCPipeTCPHandler(socketserver.BaseRequestHandler):
                     continue
 
                 if ms['type'] == rpcrt.MSRPC_REQUEST:
-                    req = rpcrt.MSRPCRequest(ms, data=data[len(ms):])
-                    print(f"[TCP {self.NAME}] REQUEST opnum={req['opnum']} ctx_id={req['ctx_id']}")
-                    fault = rpcrt.MSRPCFault()
-                    fault['context_id'] = req['ctx_id']
-                    fault['status'] = rpcrt.rpc_status_codes['nca_s_op_rng_error']
+                    req = rpcrt.MSRPCRequestHeader(pdu)
+                    print(
+                        f"[TCP {self.NAME}] REQUEST opnum={req['op_num']} ctx_id={req['ctx_id']}"
+                    )
+                    fault = rpcrt.MSRPCRespHeader()
+                    fault['type'] = rpcrt.MSRPC_FAULT
+                    fault['ctx_id'] = req['ctx_id']
+                    fault['pduData'] = struct.pack(
+                        '<L', rpcrt.rpc_status_codes['nca_s_op_rng_error']
+                    )
                     pkt = fault.get_packet()
                     self.request.sendall(pkt)
                     print(f"[TCP {self.NAME}] -> FAULT")
