@@ -5,6 +5,8 @@ from impacket.dcerpc.v5 import rpcrt
 from impacket.ntlm import compute_lmhash, compute_nthash
 from impacket.uuid import uuidtup_to_bin
 
+
+# MS-RPCE 2.2.4.12 NDR Transfer Syntax Identifier
 MSRPC_STANDARD_NDR_SYNTAX = ('8A885D04-1CEB-11C9-9FE8-08002B104860', '2.0')
 
 
@@ -165,7 +167,7 @@ def start_pipe_backend(name, host, port):
     t.start()
     print(f"[TCP {name}] listening on {host}:{port}")
     return srv
-
+# SMB == NCACN_NP - This protocol sequence specifies RPC directly over SMB.
 def main():
     srv = SimpleSMBServer(listenAddress="0.0.0.0", listenPort=445)
 
@@ -181,10 +183,14 @@ def main():
     except Exception:
         pass
 
-    lm = compute_lmhash("Mos123098!")
-    nt = compute_nthash("Mos123098!")
+    # NewStrong#Pass123 | r"AD\d.kalikin", r"AD.LOCAL\d.kalikin", "d.kalikin",   # | AD
+    # lm = compute_lmhash("Mos123098!") # | AD
+    # nt = compute_nthash("Mos123098!") # | AD
 
-    for i, name in enumerate([r"AD\d.kalikin", r"AD.LOCAL\d.kalikin", "d.kalikin"], start=1001):
+    lm = compute_lmhash("NewStrong#Pass123") # | SAMBA
+    nt = compute_nthash("NewStrong#Pass123") # | SAMBA
+    # for i, name in enumerate([r"AD\d.kalikin", r"AD.LOCAL\d.kalikin", "d.kalikin"], start=1001): | AD
+    for i, name in enumerate([r"samba.local\Administrator","Administrator"], start=1001): # | SAMBA
         try:
             srv.addCredential(name, i, lm, nt)
         except TypeError:
