@@ -87,6 +87,7 @@ if __name__ == "__main__":
 
     # Дальше обычные вызовы LSARPC:
     try:
+
         resp = lsad.hLsarOpenPolicy2(dce, lsad.POLICY_VIEW_LOCAL_INFORMATION)
         hPolicy = resp["PolicyHandle"]
         print("OpenPolicy2 OK")
