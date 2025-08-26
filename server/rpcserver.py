@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
+import os
 import threading, socketserver
 from impacket.smbserver import SimpleSMBServer
 from impacket.dcerpc.v5 import rpcrt
 from impacket.ntlm import compute_lmhash, compute_nthash
-
-from parsers import FEAT_BIN, FEAT_TUP, NDR32_BIN, NDR32_TUP, NDR64_BIN, NDR64_TUP, build_bind_ack_co, parse_bind_co, parse_ncacn_header
+from lsa import handle_lsa_request
+from bind_parsers import (
+                    NDR32_BIN, 
+                    build_bind_ack_co, 
+                    parse_bind_co, 
+                    parse_ncacn_header
+                )
 
 
 
@@ -89,9 +95,9 @@ class RPCPipeTCPHandler(socketserver.BaseRequestHandler):
                         req_flags=hdr['flags'],
                         max_xmit=negotiated,
                         max_recv=negotiated,
-                        assoc_group=0x000006e7,
+                        assoc_group=0x000006e7, # хз
                         results_transfer_syntaxes=results_tx,
-                        sec_addr=b'\\pipe\\lsass\0',
+                        sec_addr=b'\\pipe\\lsass\0', # хз
                         auth_trailer=b'',
                     )
                     self.request.sendall(ack)
@@ -105,14 +111,20 @@ class RPCPipeTCPHandler(socketserver.BaseRequestHandler):
                         req = rpcrt.MSRPCRequestHeader(pdu) 
                         opnum = int(req['op_num']) 
                         ctx_id = int(req['ctx_id']) 
+                        call_id = int(req["call_id"])
                         print(f"[TCP {self.NAME}] REQUEST opnum={opnum} ctx_id={ctx_id}") 
-                        if opnum == 44:
-                            STATUS_SUCCESS = 0x00000000
-                    
                     except Exception as e: 
                         print(f"[TCP {self.NAME}] malformed REQUEST: {e}") 
                         break 
-                    # 5) прочие PDU пока не поддерживаем — закрываем (или тут можешь вернуть FAULT)
+                    if self.NAME.strip("\\").lower().endswith("lsarpc"):
+                        resp = handle_lsa_request(self.server, pdu)  # <<< add
+                        if resp:
+                            self.request.sendall(resp)
+                            continue
+
+                    # иначе / или если opnum не поддержан — вернём FAULT/закроем
+                    print(f"[TCP {self.NAME}] unsupported opnum={opnum}; closing")
+                    # 5) прочие PDU пока не поддерживаем — закрываем
                     print(f"[TCP {self.NAME}] unsupported ptype={ptype}; closing")
                     break
 

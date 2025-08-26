@@ -1,5 +1,14 @@
 import struct
-from utils import DCERPC_PTYPE_BIND, DCERPC_PTYPE_BIND_ACK, FEAT_BIN, FEAT_TUP, NDR32_BIN, NDR32_TUP, NDR64_BIN, NDR64_TUP, PFC_FIRST, PFC_LAST, NDRPush
+
+from bind_status import (
+    DCERPC_PTYPE_BIND, 
+    DCERPC_PTYPE_BIND_ACK, 
+    FEAT_BIN, 
+    NDR32_BIN, 
+    NDR64_BIN, 
+    PFC_FIRST, 
+    PFC_LAST)
+from ndr import NDRPush
 
 
 def parse_ncacn_header(pdu: bytes):
@@ -130,8 +139,3 @@ def build_bind_ack_co(call_id: int,
                       frag_len, auth_length, call_id)
 
     return hdr + body + (auth_trailer or b'')
-
-
-
-
-
