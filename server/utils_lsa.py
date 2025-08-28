@@ -64,6 +64,7 @@ def _build_response_co(call_id: int, ctx_id: int, stub: bytes) -> bytes:
     hdr = struct.pack('<BBBB4sHHI', ver, minor, ptype, pfc, drep, frag_len, auth_len, call_id)
     print(f"[LSA] Response: frag_len={frag_len}, body_len={len(body)}, stub_len={len(stub)}")
     return hdr + body
+
 def _build_fault_co(call_id: int, status: int) -> bytes:
     """
     CO FAULT (ptype=3). Stub = uint32(status).
