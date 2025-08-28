@@ -35,22 +35,35 @@ def _pull_policy_info_level(stub_in: bytes) -> int:
     # [0:20] - handle, затем enum16 level (LE)
     return struct.unpack_from('<H', stub_in, 20)[0]
 
+# def _build_response_co(call_id: int, ctx_id: int, stub: bytes) -> bytes:
+#     """
+#     Собрать CO RESPONSE (ptype=2) без аутентификатора (FIRST|LAST).
+#     """
+#     alloc_hint = struct.pack('<I', len(stub))
+#     co = alloc_hint + struct.pack('<H', ctx_id) + b'\x00\x00'  # cancel_count=0, reserved=0
+#     body = co + stub
+
+#     # common header
+#     ver, minor, ptype, pfc = 5, 0, 2, 0x03  # FIRST|LAST
+#     drep = b'\x10\x00\x00\x00'              # LE/ASCII/IEEE
+#     frag_len = 16 + len(body)
+#     auth_len = 0
+#     hdr = struct.pack('<BBBB4sHHI', ver, minor, ptype, pfc, drep, frag_len, auth_len, call_id)
+#     return hdr + body
 def _build_response_co(call_id: int, ctx_id: int, stub: bytes) -> bytes:
     """
-    Собрать CO RESPONSE (ptype=2) без аутентификатора (FIRST|LAST).
+    Build CO RESPONSE (ptype=2) with correct frag_len and alloc_hint.
     """
     alloc_hint = struct.pack('<I', len(stub))
     co = alloc_hint + struct.pack('<H', ctx_id) + b'\x00\x00'  # cancel_count=0, reserved=0
     body = co + stub
-
-    # common header
-    ver, minor, ptype, pfc = 5, 0, 2, 0x03  # FIRST|LAST
-    drep = b'\x10\x00\x00\x00'              # LE/ASCII/IEEE
-    frag_len = 16 + len(body)
+    ver, minor, ptype, pfc = 5, 0, 2, 0x03  # MSRPC_RESPONSE, FIRST|LAST
+    drep = b'\x10\x00\x00\x00'  # LE/ASCII/IEEE
+    frag_len = 16 + len(body)  # Ensure full length
     auth_len = 0
     hdr = struct.pack('<BBBB4sHHI', ver, minor, ptype, pfc, drep, frag_len, auth_len, call_id)
+    print(f"[LSA] Response: frag_len={frag_len}, body_len={len(body)}, stub_len={len(stub)}")
     return hdr + body
-
 def _build_fault_co(call_id: int, status: int) -> bytes:
     """
     CO FAULT (ptype=3). Stub = uint32(status).

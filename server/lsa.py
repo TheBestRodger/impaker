@@ -2,7 +2,7 @@
 import os
 import struct
 import threading
-from typing import Optional
+from typing import Optional, Tuple
 
 from impacket.dcerpc.v5 import rpcrt
 from ndr import NDRPush  # выравнивание по NDR
@@ -13,7 +13,8 @@ from utils_lsa import (
     _build_response_co, 
     _extract_request_stub_co, 
     _mk_dom_sid2_blob, 
-    _mk_lsa_string_large_hdr_and_deferred, 
+    _mk_lsa_string_large_hdr_and_deferred,
+    _parse_sid, 
     _pull_policy_info_level
 )
 from lsa_status import (
@@ -76,6 +77,27 @@ def ensure_domain_state(server):
     return st
 
 
+#=======
+def _mk_lsa_string_large_hdr_and_deferred(s: str | None, ref_id: int) -> Tuple[bytes, bytes]:
+    if not s:
+        return struct.pack('<HH', 0, 0) + struct.pack('<I', 0), b''  # NULL pointer
+    w = s.encode('utf-16le')
+    length_bytes = len(w)
+    max_bytes = length_bytes + 2  # Include NUL
+    hdr = struct.pack('<HH', length_bytes, max_bytes) + struct.pack('<I', ref_id)
+    data = w + b'\x00\x00'  # UTF-16LE with NUL
+    return hdr, data
+
+def _mk_dom_sid2_blob(sid_str: str) -> bytes:
+    rev, id_auth6, sub = _parse_sid(sid_str)
+    blob = bytearray()
+    blob.extend(struct.pack('B', rev))
+    blob.extend(struct.pack('B', len(sub)))
+    blob.extend(id_auth6)
+    for v in sub:
+        blob.extend(struct.pack('<I', v))
+    return bytes(blob)
+
 
 # --- ВЕТКИ opnum 46 NOT WORK ---
 def _op_LsarQueryInformationPolicy2_ROLE(server, req_hdr, stub_in: bytes) -> bytes:
@@ -96,46 +118,50 @@ def _op_LsarQueryInformationPolicy2_DNS_like(server, req_hdr, stub_in: bytes) ->
     fixed = bytearray()
     deferred = bytearray()
 
-    def off_fixed(): return len(fixed)
-    def off_def():   return len(deferred)
+    # Base referent ID for this response
+    base_ref = 0x00020000
 
-    # 1) present pointer на out *info
-    fixed += struct.pack('<I', 0x00020001)
-    print(f"[LSA][DNS] fixed start off={off_fixed()} (after present-ptr)")
+    # 1) Present pointer to lsa_DnsDomainInfo
+    fixed.extend(struct.pack('<I', base_ref + 1))  # Pointer to the struct
+    print(f"[LSA][DNS] fixed start off={len(fixed)} (after present-ptr)")
 
-    # 2) Name: LSA_STRING_LARGE — hdr в fixed, payload в deferred
-    name_hdr, name_def = _mk_lsa_string_large_hdr_and_deferred(st['netbios'], ref_id=0x00021001)
-    print(f"[LSA][DNS] Name hdr off={off_fixed()} -> +{len(name_hdr)}")
-    fixed += name_hdr
-    print(f"[LSA][DNS] Name deferred off={off_def()} -> +{len(name_def)}")
-    deferred += name_def
+    # 2) Name: LSA_STRING_LARGE
+    name_hdr, name_def = _mk_lsa_string_large_hdr_and_deferred(st['netbios'], base_ref + 2)
+    fixed.extend(name_hdr)
+    print(f"[LSA][DNS] Name hdr off={len(fixed) - len(name_hdr)} -> +{len(name_hdr)}")
+    deferred.extend(name_def)
+    print(f"[LSA][DNS] Name deferred off={len(deferred) - len(name_def)} -> +{len(name_def)}")
 
-    # 3) Sid: PSID — в fixed: ptr(ref), в deferred: sid payload
-    print(f"[LSA][DNS] Sid ptr off={off_fixed()} -> +4")
-    fixed += struct.pack('<I', 0x0000000)           # любой ненулевой referent id
+    # 3) Sid: PSID (inline with pointer)
+    fixed.extend(struct.pack('<I', base_ref + 3))  # Pointer to SID
     sid_blob = _mk_dom_sid2_blob(st['sid_str'])
-    print(f"[LSA][DNS] Sid deferred off={off_def()} -> +{len(sid_blob)}")
-    deferred += sid_blob
+    deferred.extend(sid_blob)
+    print(f"[LSA][DNS] Sid ptr off={len(fixed) - 4} -> +4")
+    print(f"[LSA][DNS] Sid deferred off={len(deferred) - len(sid_blob)} -> +{len(sid_blob)}")
 
     # 4) DnsDomain: LSA_STRING_LARGE
-    dns_hdr, dns_def = _mk_lsa_string_large_hdr_and_deferred(st['dns'], ref_id=0x00021002)
-    print(f"[LSA][DNS] DnsDomain hdr off={off_fixed()} -> +{len(dns_hdr)}")
-    fixed += dns_hdr
-    print(f"[LSA][DNS] DnsDomain deferred off={off_def()} -> +{len(dns_def)}")
-    deferred += dns_def
+    dns_hdr, dns_def = _mk_lsa_string_large_hdr_and_deferred(st['dns'], base_ref + 4)
+    fixed.extend(dns_hdr)
+    print(f"[LSA][DNS] DnsDomain hdr off={len(fixed) - len(dns_hdr)} -> +{len(dns_hdr)}")
+    deferred.extend(dns_def)
+    print(f"[LSA][DNS] DnsDomain deferred off={len(deferred) - len(dns_def)} -> +{len(dns_def)}")
 
     # 5) DnsForest: LSA_STRING_LARGE
-    forest_hdr, forest_def = _mk_lsa_string_large_hdr_and_deferred(st['forest'], ref_id=0x00021003)
-    print(f"[LSA][DNS] DnsForest hdr off={off_fixed()} -> +{len(forest_hdr)}")
-    fixed += forest_hdr
-    print(f"[LSA][DNS] DnsForest deferred off={off_def()} -> +{len(forest_def)}")
-    deferred += forest_def
+    forest_hdr, forest_def = _mk_lsa_string_large_hdr_and_deferred(st['forest'], base_ref + 5)
+    fixed.extend(forest_hdr)
+    print(f"[LSA][DNS] DnsForest hdr off={len(fixed) - len(forest_hdr)} -> +{len(forest_hdr)}")
+    deferred.extend(forest_def)
+    print(f"[LSA][DNS] DnsForest deferred off={len(deferred) - len(forest_def)} -> +{len(forest_def)}")
 
-    # 6) DomainGuid: GUID (фиксированная часть)
-    print(f"[LSA][DNS] Guid off={off_fixed()} -> +16")
-    fixed += st['guid'].bytes_le
+    # 6) DomainGuid: GUID (inline, no pointer)
+    fixed.extend(st['guid'].bytes_le)
+    print(f"[LSA][DNS] Guid off={len(fixed) - 16} -> +16")
 
-    # Собираем arm: fixed + deferred
+    # Align fixed part to 4-byte boundary
+    while len(fixed) % 4:
+        fixed.append(0)
+
+    # Combine fixed and deferred
     arm = bytes(fixed) + bytes(deferred)
     stub_out = arm + struct.pack('<I', STATUS_SUCCESS)
 
@@ -144,7 +170,6 @@ def _op_LsarQueryInformationPolicy2_DNS_like(server, req_hdr, stub_in: bytes) ->
     print(f"[LSA][DNS] stub tail: {_hexdump(stub_out[-64:])}")
 
     return _build_response_co(int(req_hdr['call_id']), int(req_hdr['ctx_id']), stub_out)
-
 # ---- Частичный парс OpenPolicy2 opnum 44 (минимум) ----
 def _guess_desired_access(stub_in: bytes) -> int:
     """
@@ -199,11 +224,11 @@ def _op_LsarQueryInformationPolicy2(server, req_hdr, stub_in: bytes) -> bytes:
         return _op_LsarQueryInformationPolicy2_DNS_like(server, req_hdr, stub_in)
     if level in (9, 10, 11):
         return _build_response_co(call_id=int(req_hdr['call_id']), 
-                                  ctx_id=int(req_hdr['ctx_id']), 
-                                  stub=struct.pack('<I', STATUS_INVALID_PARAMETER))
+                                 ctx_id=int(req_hdr['ctx_id']), 
+                                 stub=struct.pack('<I', STATUS_INVALID_PARAMETER))
     return _build_response_co(call_id=int(req_hdr['call_id']), 
-                              ctx_id=int(req_hdr['ctx_id']), 
-                              stub=struct.pack('<I', STATUS_INVALID_INFO_CLASS))
+                             ctx_id=int(req_hdr['ctx_id']), 
+                             stub=struct.pack('<I', STATUS_INVALID_INFO_CLASS))
 # ---- opnum 0 ----
 def _op_LsarClose(server, req_hdr, stub_in: bytes) -> bytes:
     """
