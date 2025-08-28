@@ -91,6 +91,14 @@ def _op_LsarQueryInformationPolicy2_ROLE(server, req_hdr, stub_in: bytes) -> byt
 
 # == DNS/DNS_INT с deferred-поинтерами ==
 def _op_LsarQueryInformationPolicy2_DNS_like(server, req_hdr, stub_in: bytes) -> bytes:
+    """Build PolicyDnsDomainInformation/Int for LsarQueryInformationPolicy2.
+
+    This helper crafts the complex pointer layout returned for info levels 12
+    (PolicyDnsDomainInformation) and 13 (PolicyDnsDomainInformationInt) of the
+    LsarQueryInformationPolicy2 RPC (opnum 46).  It separates fixed and
+    deferred data to mimic Windows' NDR encoding with explicit referent IDs.
+    """
+
     st = ensure_domain_state(server)
 
     fixed = bytearray()
