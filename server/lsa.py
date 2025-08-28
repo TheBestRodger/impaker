@@ -19,24 +19,6 @@ from opnum46 import _op_LsarQueryInformationPolicy2
 from opnum0 import _op_LsarClose
 from opnum44 import _op_LsarOpenPolicy2
 
-# ---- хранилище хэндлов ----
-class _HandleTable:
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._map = {}  # key: uuid16 bytes -> {'type': 'policy', 'access': int}
-
-    def put_policy(self, uuid16: bytes, access: int):
-        with self._lock:
-            self._map[uuid16] = {'type': 'policy', 'access': access}
-
-    def pop(self, uuid16: bytes):
-        with self._lock:
-            return self._map.pop(uuid16, None)
-
-    def has(self, uuid16: bytes) -> bool:
-        with self._lock:
-            return uuid16 in self._map
-
 
 # ---- Мейн вызов----
 def handle_lsa_request(server, pdu: bytes) -> Optional[bytes]:

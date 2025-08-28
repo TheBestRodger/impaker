@@ -1,18 +1,9 @@
 import struct, uuid
 from enum import IntEnum
 
-from utils_lsa import NDRPush, _build_response_co
+from utils_lsa import NDRPush, _build_response_co, _mk_dom_sid2_blob, _mk_lsa_string_large_hdr_and_deferred
+from lsa_status import STATUS_SUCCESS, STATUS_INVALID_INFO_CLASS, STATUS_INVALID_PARAMETER, _HandleTable
 
-STATUS_SUCCESS             = 0x00000000
-STATUS_INVALID_PARAMETER   = 0xC000000D
-STATUS_INVALID_INFO_CLASS  = 0xC0000003
-# debug
-def _hexdump(b: bytes, limit: int = 96) -> str:
-    n = min(len(b), limit)
-    s = ' '.join(f'{x:02x}' for x in b[:n])
-    if len(b) > n:
-        s += ' ...'
-    return s
 # --- помощники ---
 def _pull_level_from_stub(stub_in: bytes) -> int:
     # [0:20] POLICY_HANDLE, затем enum16 level
@@ -126,45 +117,75 @@ def _op_LsarQueryInfo_ROLE(server, req_hdr) -> bytes:
 
 # === DNS/DNS_INT arm (fixed + deferred, как у Samba) ===
 def _op_LsarQueryInfo_DNS(server, req_hdr) -> bytes:
+    """Build PolicyDnsDomainInformation/Int for LsarQueryInformationPolicy2.
+
+    This helper crafts the complex pointer layout returned for info levels 12
+    (PolicyDnsDomainInformation) and 13 (PolicyDnsDomainInformationInt) of the
+    LsarQueryInformationPolicy2 RPC (opnum 46).  It separates fixed and
+    deferred data to mimic Windows' NDR encoding with explicit referent IDs.
+    """
+
     st = ensure_domain_state(server)
 
-    fixed  = bytearray()
-    deferd = bytearray()
+    fixed = bytearray()
+    deferred = bytearray()
 
-    # present pointer на out *info
+    def off_fixed():
+        return len(fixed)
+
+    def off_def():
+        return len(deferred)
+
+    # Present pointer to returned structure
     fixed += struct.pack('<I', 0x00020001)
+    print(f"[LSA][DNS] fixed start off={off_fixed()} (after present-ptr)")
 
-    # Порядок arm ровно как в Samba:
-    # Name (LSA_STRING_LARGE)
-    fixed += _mk_lsa_string_large_fixed(st['netbios'], ref_id=0x00021001)
-    deferd += _mk_lsa_string_large_deferred(st['netbios'])
+    # Name: header in fixed, data in deferred
+    name_hdr, name_def = _mk_lsa_string_large_hdr_and_deferred(
+        st['netbios'], ref_id=0x00020002
+    )
+    print(f"[LSA][DNS] Name hdr off={off_fixed()} -> +{len(name_hdr)}")
+    fixed += name_hdr
+    print(f"[LSA][DNS] Name deferred off={off_def()} -> +{len(name_def)}")
+    deferred += name_def
 
-    # Sid (PSID): fixed=unique ptr, deferred=dom_sid2 payload
-    fixed += struct.pack('<I', 0x00022001)
-    deferd += _mk_dom_sid2_payload(st['sid_str'])
+    # Sid pointer in fixed, sid blob in deferred
+    print(f"[LSA][DNS] Sid ptr off={off_fixed()} -> +4")
+    fixed += struct.pack('<I', 0x00020003)
+    sid_blob = _mk_dom_sid2_blob(st['sid_str'])
+    print(f"[LSA][DNS] Sid deferred off={off_def()} -> +{len(sid_blob)}")
+    deferred += sid_blob
 
-    # DnsDomain
-    fixed += _mk_lsa_string_large_fixed(st['dns'], ref_id=0x00021002)
-    deferd += _mk_lsa_string_large_deferred(st['dns'])
+    # DnsDomainName
+    dns_hdr, dns_def = _mk_lsa_string_large_hdr_and_deferred(
+        st['dns'], ref_id=0x00020004
+    )
+    print(f"[LSA][DNS] DnsDomain hdr off={off_fixed()} -> +{len(dns_hdr)}")
+    fixed += dns_hdr
+    print(f"[LSA][DNS] DnsDomain deferred off={off_def()} -> +{len(dns_def)}")
+    deferred += dns_def
 
-    # DnsForest
-    fixed += _mk_lsa_string_large_fixed(st['forest'], ref_id=0x00021003)
-    deferd += _mk_lsa_string_large_deferred(st['forest'])
+    # DnsForestName
+    forest_hdr, forest_def = _mk_lsa_string_large_hdr_and_deferred(
+        st['forest'], ref_id=0x00020005
+    )
+    print(f"[LSA][DNS] DnsForest hdr off={off_fixed()} -> +{len(forest_hdr)}")
+    fixed += forest_hdr
+    print(f"[LSA][DNS] DnsForest deferred off={off_def()} -> +{len(forest_def)}")
+    deferred += forest_def
 
-    # DomainGuid (GUID в fixed)
+    # DomainGuid
+    print(f"[LSA][DNS] Guid off={off_fixed()} -> +16")
     fixed += st['guid'].bytes_le
 
-    # Итоговый stub: present-ptr + arm(fixed) + arm(deferred) + NTSTATUS
-    stub = bytes(fixed) + bytes(deferd)
+    arm = bytes(fixed) + bytes(deferred)
+    stub_out = arm + struct.pack('<I', STATUS_SUCCESS)
 
-    ndr = NDRPush()
-    ndr.raw(stub)
-    ndr.u32(STATUS_SUCCESS)
-    stub_out = ndr.getvalue()
-
-    print(f"[LSA][DNS] fixed_len={len(fixed)} deferred_len={len(deferd)} total_stub={len(stub_out)}")
-    print(f"[LSA][DNS] head: {_hexdump(stub_out[:64])}")
-    print(f"[LSA][DNS] tail: {_hexdump(stub_out[-64:])}")
+    print(
+        f"[LSA][DNS] fixed_len={len(fixed)} deferred_len={len(deferred)} arm_len={len(arm)} total_stub={len(stub_out)}"
+    )
+    print(f"[LSA][DNS] stub head: {_hexdump(stub_out[:64])}")
+    print(f"[LSA][DNS] stub tail: {_hexdump(stub_out[-64:])}")
 
     return _build_response_co(int(req_hdr['call_id']), int(req_hdr['ctx_id']), stub_out)
 

@@ -2,14 +2,8 @@
 import os
 import struct
 
-from lsa import STATUS_SUCCESS, _HandleTable
 from utils_lsa import NDRPush, _build_response_co
-
-
-def ensure_handle_table(server) -> _HandleTable:
-    if not hasattr(server, 'lsa_handles'):
-        server.lsa_handles = _HandleTable()
-    return server.lsa_handles
+from lsa_status import STATUS_SUCCESS, _HandleTable, ensure_handle_table
 
 # ---- Частичный парс OpenPolicy2 opnum 44 (минимум) ----
 def _guess_desired_access(stub_in: bytes) -> int:

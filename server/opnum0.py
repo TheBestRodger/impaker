@@ -1,7 +1,7 @@
 # ---- opnum 0 ----
 import struct
-from lsa import STATUS_SUCCESS, _HandleTable, ensure_handle_table
 from utils_lsa import NDRPush, _build_response_co
+from lsa_status import STATUS_SUCCESS, _HandleTable, ensure_handle_table
 
 
 def _op_LsarClose(server, req_hdr, stub_in: bytes) -> bytes:
