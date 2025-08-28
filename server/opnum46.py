@@ -81,51 +81,6 @@ def ensure_domain_state(server):
     }
     return server.lsa_domain_state
 
-# --- утилиты для fixed+deferred (как у Samba ndr_push) ---
-def _align4_into(b: bytearray):
-    rem = (-len(b)) & 3
-    if rem:
-        b += b'\x00' * rem
-
-def _mk_lsa_string_large_fixed(s: str | None, ref_id: int) -> bytes:
-    """fixed часть LSA_STRING_LARGE: Length, MaximumLength, [unique] Buffer(ptr or 0)"""
-    if not s:
-        return struct.pack('<HHI', 0, 0, 0)
-    w = s.encode('utf-16le')
-    length_bytes = len(w)              # без NUL
-    max_bytes    = length_bytes + 2    # с NUL
-    return struct.pack('<HHI', length_bytes, max_bytes, ref_id)
-
-def _mk_lsa_string_large_deferred(s: str | None) -> bytes:
-    """deferred часть LSA_STRING_LARGE: max_count, offset, actual_count, UTF16LE+NUL, align4"""
-    if not s:
-        return b''
-    w = s.encode('utf-16le')
-    length_bytes = len(w)
-    max_bytes    = length_bytes + 2
-    max_count    = max_bytes // 2
-    actual       = (length_bytes // 2) + 1
-    out = bytearray()
-    out += struct.pack('<III', max_count, 0, actual)
-    out += w + b'\x00\x00'
-    _align4_into(out)
-    return bytes(out)
-
-def _mk_dom_sid2_payload(sid_str: str) -> bytes:
-    """SID payload (dom_sid2) для deferred: rev,u8 count,id_auth[6] BE, subauths (LE), align4"""
-    parts = sid_str.split('-')
-    assert parts[0] == 'S'
-    rev = int(parts[1]); ida = int(parts[2])
-    ida6 = ida.to_bytes(6, 'big')
-    subs = list(map(int, parts[3:]))
-    out = bytearray()
-    out += struct.pack('BB', rev, len(subs))
-    out += ida6
-    for v in subs:
-        out += struct.pack('<I', v)
-    _align4_into(out)
-    return bytes(out)
-
 # --- помощники ---
 def _pull_level_from_stub(stub_in: bytes) -> int:
     # [0:20] POLICY_HANDLE, затем enum16 level
