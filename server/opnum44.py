@@ -30,7 +30,7 @@ def _op_LsarOpenPolicy2(server, req_hdr, stub_in: bytes) -> bytes:
 
     handles.put_policy(uuid16, desired_access)
 
-    # Собираем stub через NDRPush (твои выравнивания уже отлажены)
+    # Собираем stub через NDRPush
     ndr = NDRPush()
     ndr.raw(policy_handle)
     ndr.u32(STATUS_SUCCESS)

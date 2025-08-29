@@ -42,7 +42,7 @@ def _mk_dom_sid2_blob(sid_str: str) -> bytes:
     ida6  = ida.to_bytes(6, 'big')
 
     out = bytearray()
-    out += struct.pack('<I', count)    # <-- ВАЖНО: 32-битный Count
+    out += struct.pack('<I', count)    # ВАЖНО: 32-битный Count
     out += struct.pack('B', rev)
     out += struct.pack('B', count)
     out += ida6
@@ -86,7 +86,6 @@ def _hexdump(b: bytes, limit=96):
     b = b[:limit]
     return ' '.join(f'{x:02x}' for x in b) + (' ...' if len(b) == limit else '')
 
-# --- доменное состояние (подставь свои значения при желании) ---
 def ensure_domain_state(server):
     if hasattr(server, 'lsa_domain_state'):
         return server.lsa_domain_state

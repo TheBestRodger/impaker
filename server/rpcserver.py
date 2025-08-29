@@ -44,7 +44,7 @@ def normalize_uuid(u) -> str:
     if not u:
         return ""
     if isinstance(u, (bytes, bytearray)):
-        # многие парсеры возвращают 16 байт в LE; если у тебя BE — поменяй на bytes=
+        # парсеры возвращают 16 байт в LE; если BE — то bytes
         try:
             return str(uuid.UUID(bytes_le=bytes(u))).lower()
         except Exception:
@@ -60,7 +60,6 @@ def normalize_uuid(u) -> str:
     try:
         return str(uuid.UUID(s)).lower()
     except Exception:
-        # возможно пришло без дефисов — попробуем ещё раз
         try:
             return str(uuid.UUID(s.replace("-", ""))).lower()
         except Exception:
@@ -68,7 +67,6 @@ def normalize_uuid(u) -> str:
 def lookup_iface_by_uuid(u) -> str | None:
     auuid = normalize_uuid(u)
     if not isinstance(IFACE_BY_UUID, dict):
-        # кто-то перезаписал переменную — восстановим локальную копию на лету
         local = {
             LSARPC_UUID.lower():   "lsarpc",
             SAMR_UUID.lower():     "samr",
@@ -104,14 +102,12 @@ class RPCPipeTCPHandler(socketserver.BaseRequestHandler):
         """Вернуть сервис по ctx_id, либо дефолтный (по имени пайпа/слушателя) как фолбэк."""
         svc = self.ctx_map.get(ctx_id)
         if svc is None:
-            # нет такого контекста — попробуем дефолт
             self._remember_default_service()
             return getattr(self, "_default_service", None)
         return svc
         # один bind на соединение, как в Samba
-        def __init__(self, request, client_address, server):
+    def __init__(self, request, client_address, server):
             super().__init__(request, client_address, server)
-            # ваша дополнительная инициализация здесь
     
     def setup(self):
         super().setup()
@@ -183,7 +179,6 @@ class RPCPipeTCPHandler(socketserver.BaseRequestHandler):
                             abstr = c.get('abstract') or {}
                             auuid_raw = (abstr.get('uuid') if isinstance(abstr, dict) else None) or ""
                         else:
-                            # fallback: попробуй атрибуты/позиции (если у тебя namedtuple/tuple)
                             try:
                                 ctx = int(getattr(c, 'ctx_id', 0))
                             except Exception:
@@ -202,7 +197,7 @@ class RPCPipeTCPHandler(socketserver.BaseRequestHandler):
                         lst = c.get('tx_list') or []
                         if lst and isinstance(lst[0], (bytes, bytearray)) and len(lst[0]) == 20:
                             results_tx.append(lst[0])
-                    # если клиент не прислал — подстрахуемся
+                    # если клиент не прислал
                     if not results_tx:
                         results_tx = [NDR32_BIN]
 
