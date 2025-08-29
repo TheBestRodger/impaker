@@ -101,9 +101,9 @@ def _ndr_pack_twr_t(tower_octets: bytes) -> bytes:
     n.u32(tl)           # conformant max_count
     n.raw(tower_octets)
     # выравнивание open array до 4 байт — если твой NDRPush не делает сам
-    while (n.get_size() % 4) != 0:
+    while (n.off % 4) != 0:
         n.u8(0)
-    return n.get_buffer()
+    return n.getvalue()
 
 def _guess_local_ip_for_reply(server) -> str:
     """Подобрать IP, который вернём клиенту.
@@ -144,7 +144,7 @@ def _build_epm_map_stub(tower_octets: Optional[bytes], status: int) -> bytes:
     # 4) status
     stub.u32(status)
 
-    return stub.get_buffer()
+    return stub.getvalue()
 
 def _parse_requested_iface_from_map_tower(stub_in: bytes) -> Optional[Tuple[uuid.UUID,int]]:
     """
