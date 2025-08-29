@@ -1,10 +1,15 @@
-# lsa.py — минимальная серверная реализация части MS-LSAD поверх MS-RPCE (ncacn_np / co)
+"""epmapper.py — минимальный сервер EPM поверх MS-RPCE.
+
+Файл переписан по аналогии с реализацией протокола LSA. Никакого
+функционала, не относящегося к EPM, здесь нет: оставлена только
+обработка вызова ept_map(), а заголовки и FAULT'ы формируются
+общими вспомогательными функциями из ``utils_lsa``.
+"""
+
 import ipaddress
-import os
-import struct
-import threading
 from typing import Optional, Tuple
 import uuid
+
 from impacket.dcerpc.v5 import rpcrt
 from ndr import NDRPush  # выравнивание по NDR
 
@@ -13,18 +18,18 @@ from utils_lsa import (
     _build_response_co,
     _extract_request_stub_co,
 )
-from lsa import NCA_S_OP_RNG_ERROR
-from lsa_status import STATUS_SUCCESS, _HandleTable, ensure_handle_table
+from lsa_status import NCA_S_OP_RNG_ERROR
 
-EPM_OPNUM_EPT_INSERT                = 0
-EPM_OPNUM_EPT_DELETE                = 1
-EPM_OPNUM_EPT_LOOKUP                = 2
-EPM_OPNUM_EPT_MAP                   = 3
-EPM_OPNUM_EPT_LOOKUP_HANDLE_FREE    = 4
-EPM_OPNUM_EPT_INQ_OBJECT            = 5
-EPM_OPNUM_EPT_MGMT_DELETE           = 6
+EPM_OPNUM_EPT_INSERT             = 0
+EPM_OPNUM_EPT_DELETE             = 1
+EPM_OPNUM_EPT_LOOKUP             = 2
+EPM_OPNUM_EPT_MAP                = 3
+EPM_OPNUM_EPT_LOOKUP_HANDLE_FREE = 4
+EPM_OPNUM_EPT_INQ_OBJECT         = 5
+EPM_OPNUM_EPT_MGMT_DELETE        = 6
+
 # Статусы из [MS-RPCE]: 0 - ok; 0x16C9A0D6 - not registered
-EPM_S_OK = 0x00000000
+EPM_S_OK            = 0x00000000
 EPM_S_NOT_REGISTERED = 0x16C9A0D6
 
 # Трансфер-синтаксис NDR (UUID + major) для Tower Floor #2 (UUID-type identifier, prefix 0x0d)
@@ -101,69 +106,45 @@ def _ndr_pack_twr_t(tower_octets: bytes) -> bytes:
     return n.get_buffer()
 
 def _guess_local_ip_for_reply(server) -> str:
-    # Попытка взять «правильный» IP. Если слушаем на 0.0.0.0 — пусть будет 127.0.0.1 как безопасный дефолт.
+    """Подобрать IP, который вернём клиенту.
+
+    Если слушаем на 0.0.0.0, безопасным значением будет 127.0.0.1.
+    """
     try:
-        ip = getattr(server, 'server_address', ('0.0.0.0',0))[0]
+        ip = getattr(server, "server_address", ("0.0.0.0", 0))[0]
     except Exception:
-        ip = '0.0.0.0'
-    if ip == '0.0.0.0':
-        return '127.0.0.1'
-    return ip
-PFC_FIRST = 0x01
-PFC_LAST  = 0x02
-def _build_epm_map_response(req: rpcrt.MSRPCRequestHeader, tower_octets: Optional[bytes], status: int) -> bytes:
-    """
-    Собираем RESPONSE для ept_map():
-      [out] entry_handle (context handle pointer) — дадим не-NULL фиктивный
-      [out] num_towers
-      [out] ITowers (pointer на массив pointer'ов twr_t), вернем 0 или 1 элемент
-      [out] status
-    Примечание: Microsoft-расширение ept_map описано в [MS-RPCE] 2.2.1.2.5, статусы тоже там. :contentReference[oaicite:5]{index=5}
-    """
+        ip = "0.0.0.0"
+    return "127.0.0.1" if ip == "0.0.0.0" else ip
+
+
+def _build_epm_map_stub(tower_octets: Optional[bytes], status: int) -> bytes:
+    """Собрать stub-часть ответа ept_map()."""
     stub = NDRPush()
 
     # 1) entry_handle: сделаем не-NULL указатель на context handle (20 байт)
     # NDR: ptr referent_id, затем ndr_context_handle { uint32 attrs; uuid_t uuid; }
-    stub.u32(0x20000)         # referent id ненулевой
-    stub.u32(0)               # attrs
-    stub.raw(b'\x00'*16)      # uuid нулевой; можно сгенерить
+    stub.u32(0x20000)
+    stub.u32(0)
+    stub.raw(b"\x00" * 16)
 
     # 2) num_towers
-    if tower_octets is None:
-        num = 0
-    else:
-        num = 1
+    num = 1 if tower_octets is not None else 0
     stub.u32(num)
 
     # 3) ITowers (pointer на массив pointer'ов twr_p_t)
-    stub.u32(0x20004 if num else 0x20000)  # referent id (лишь бы ненулевой, если хотим вернуть массив; можно оставить один и тот же)
-    # Conformant + Varying array заголовок: max_count, offset, actual_count
-    stub.u32(num)   # max_count
-    stub.u32(0)     # offset
-    stub.u32(num)   # actual_count
-    # Элементы — указатели на twr_t
+    stub.u32(0x20004 if num else 0)
+    stub.u32(num)
+    stub.u32(0)
+    stub.u32(num)
+
     if num:
-        stub.u32(0x20008)  # referent id на twr_t (элемент 0)
-    # Затем реальные twr_t (каждый идет после списка указателей)
-    if num:
+        stub.u32(0x20008)
         stub.raw(_ndr_pack_twr_t(tower_octets))
 
     # 4) status
     stub.u32(status)
 
-    # Заголовок RESPONSE
-    resp = rpcrt.MSRPCRespHeader()
-    resp['type']       = rpcrt.MSRPC_RESPONSE
-    resp['flags']      = (PFC_FIRST | PFC_LAST) & 0xFF
-    resp['call_id']    = req['call_id']
-    resp['alloc_hint'] = len(stub.get_buffer())
-    # в разных версиях impacket поле называется p_cont_id / ctx_id — поддержим оба:
-    if 'p_cont_id' in resp.fields:
-        resp['p_cont_id'] = req['ctx_id']
-    else:
-        resp['ctx_id'] = req['ctx_id']
-    resp['cancel_count'] = 0
-    return resp.getData() + stub.get_buffer()
+    return stub.get_buffer()
 
 def _parse_requested_iface_from_map_tower(stub_in: bytes) -> Optional[Tuple[uuid.UUID,int]]:
     """
@@ -223,16 +204,16 @@ def _op_dcesrv_epm_Map(server, req_hdr, stub_in: bytes) -> bytes:
 
     if asked is not None:
         iface_u, ver_major = asked
-        # Маппинг на наши известные сервисы
         key = str(iface_u).lower()
         port_info = IFACE_PORTS.get(key)
         if port_info:
-            # Выбрать IP для ответа
             ip = _guess_local_ip_for_reply(server)
             tower_octets = _build_tower_ncacn_ip_tcp(iface_u, ver_major or 1, ip, port_info[1])
             status = EPM_S_OK
 
-    return _build_epm_map_response(req_hdr, tower_octets, status)
+    stub = _build_epm_map_stub(tower_octets, status)
+    ctx_id = req_hdr['ctx_id'] if 'ctx_id' in req_hdr.fields else req_hdr['p_cont_id']
+    return _build_response_co(call_id=int(req_hdr['call_id']), ctx_id=int(ctx_id), stub=stub)
 
 # ---- Мейн вызов----
 def handle_epm_request(server, pdu: bytes) -> Optional[bytes]:
@@ -246,24 +227,9 @@ def handle_epm_request(server, pdu: bytes) -> Optional[bytes]:
         return None
 
     stub_in, _auth = _extract_request_stub_co(pdu)
-    if opnum == EPM_OPNUM_EPT_MAP:
-         _op_dcesrv_epm_Map(server, req, stub_in)
 
-    # if opnum == 0:
-    #     _op_dcesrv_epm_Insert()
-    # elif opnum == 1:
-    #     _op_dcesrv_epm_Delete()
-    # elif opnum == 2:
-    #     _op_dcesrv_epm_Lookup()
-    # elif opnum == 3:
-    #     _op_dcesrv_epm_Map()
-    # elif opnum == 4:
-    #     _op_dcesrv_epm_LookupHandleFree()
-    # elif opnum == 5:
-    #     _op_dcesrv_epm_InqObject()
-    # elif opnum == 6:
-    #     _op_dcesrv_epm_MgmtDelete()
-    # elif opnum == 7:
-    #     _op_dcesrv_epm_MapAuth()
+    if opnum == EPM_OPNUM_EPT_MAP:
+        return _op_dcesrv_epm_Map(server, req, stub_in)
+
     # остальное пока не реализовано — корректный FAULT (nca_s_op_rng_error)
     return _build_fault_co(call_id=int(req['call_id']), status=NCA_S_OP_RNG_ERROR)
