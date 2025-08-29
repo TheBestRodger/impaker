@@ -1,9 +1,4 @@
 """epmapper.py — минимальный сервер EPM поверх MS-RPCE.
-
-Файл переписан по аналогии с реализацией протокола LSA. Никакого
-функционала, не относящегося к EPM, здесь нет: оставлена только
-обработка вызова ept_map(), а заголовки и FAULT'ы формируются
-общими вспомогательными функциями из ``utils_lsa``.
 """
 
 import ipaddress
@@ -230,6 +225,7 @@ def handle_epm_request(server, pdu: bytes) -> Optional[bytes]:
 
     if opnum == EPM_OPNUM_EPT_MAP:
         return _op_dcesrv_epm_Map(server, req, stub_in)
-
+    else:
+        print(f"NOT SUPP OPNUM {opnum}")
     # остальное пока не реализовано — корректный FAULT (nca_s_op_rng_error)
     return _build_fault_co(call_id=int(req['call_id']), status=NCA_S_OP_RNG_ERROR)
