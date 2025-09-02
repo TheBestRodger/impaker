@@ -2,7 +2,7 @@
 import struct
 import uuid
 
-from epm import ndr_pull_epm_Map  # импортируй твой класс
+from epm import ndr_pull_epm_Map 
 
 NETLOGON = uuid.UUID("12345678-1234-abcd-ef00-01234567cffb")
 DCE_NDR  = uuid.UUID("8a885d04-1ceb-11c9-9fe8-08002b104860")
@@ -10,7 +10,6 @@ DCE_NDR  = uuid.UUID("8a885d04-1ceb-11c9-9fe8-08002b104860")
 def _hex(s: str) -> bytes:
     return bytes.fromhex(' '.join(s.split()))
 
-# общий блок tower_octets из твоего дампа (ровно 0x4B = 75 байт)
 TOWER_OCTETS = _hex(
     "05 00"
     # Floor 1: iface UUID (NETLOGON) + v1.0; RHS_len=02 00 + 00 00
@@ -60,7 +59,6 @@ def _build_stub_base(include_ref_id: bool) -> bytes:
     return bytes(stub)
 
 def _assert_common(req):
-    # базовые ожидания по твоему реальному дампу
     assert req.floors == 5
     assert req.max_towers == 4
     assert req.tower.iface_uuid == NETLOGON
