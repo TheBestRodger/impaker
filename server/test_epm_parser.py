@@ -70,7 +70,7 @@ def _assert_common(req):
     assert req.tower.ip == "0.0.0.0"
 
 def test_epm_pull_without_refid():
-    """Вариант как в твоём конструкторе: map_ptr, затем сразу twr_t."""
+    """Вариант: map_ptr, затем сразу twr_t."""
     stub = _build_stub_base(include_ref_id=False)
     req = ndr_pull_epm_Map(stub)
     _assert_common(req)
