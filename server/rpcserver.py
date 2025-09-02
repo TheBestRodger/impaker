@@ -18,7 +18,7 @@ from epmapper import handle_epm_request
 # UUID интерфейсов (abstract syntax), чтобы логировать/фильтровать
 LSARPC_UUID     = "12345778-1234-abcd-ef00-0123456789ab"
 SAMR_UUID       = "12345778-1234-abcd-ef00-0123456789ac"
-NETLOGON_UUID   = "12345678-1234-abcd-ef00-0123456789ab"  # проверь свою версию при необходимости
+NETLOGON_UUID   = "12345678-1234-abcd-ef00-01234567cffb"  # проверь свою версию при необходимости
 EPM_UUID        = "e1af8308-5d1f-11c9-91a4-08002b14a0fa"#"00000000-0000-0000-0000-000000000000"
 # NCA статус-коды для FAULT
 NCA_S_OK            = 0x00000000
@@ -281,7 +281,7 @@ class RPCPipeTCPHandler(socketserver.BaseRequestHandler):
                 buf += chunk
             return buf
 
-# без этого вообще не откроются pipe lsa net samr
+# без этого вообще не откроются pipe lsa net samr - pipe over - 445 port
 def start_pipe_backend(name, host, port):
     class _H(RPCPipeTCPHandler):
         NAME = name
@@ -292,7 +292,7 @@ def start_pipe_backend(name, host, port):
     print(f"[TCP {name}] listening on {host}:{port}")
     return srv
 
-def start_dcerpc_tcp(name, host, port, abstract_uuid=None):
+def start_dcerpc_tcp(name, host, port, abstract_uuid=None): # pipe over - 135 port
     class _H(RPCPipeTCPHandler):
         NAME = f"ncacn_ip_tcp:{name}"
         ABSTRACT_UUID = abstract_uuid
