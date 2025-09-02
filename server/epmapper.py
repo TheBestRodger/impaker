@@ -73,12 +73,9 @@ def _build_tower_ncacn_ip_tcp(iface_uuid: uuid.UUID, iface_ver_major: int, ip: s
 
     
 def _op_dcesrv_epm_Map(server, req_hdr, stub_in: bytes) -> bytes:
-    # 1) Разбираем запрос (ты уже сделал)
     epm = ndr_pull_epm_Map(stub_in)
     max_towers = epm.max_towers
 
-    # 2) Роутинг: есть ли у нас такая служба?
-    #    Если есть — строим свою башню (ncacn_ip_tcp), иначе возвращаем 0 башен и NOT_REGISTERED.
     towers = []
     status = EPM_S_NOT_REGISTERED
 
@@ -86,7 +83,7 @@ def _op_dcesrv_epm_Map(server, req_hdr, stub_in: bytes) -> bytes:
     ver   = epm.tower.iface_ver_major or 1
     hit = IFACE_PORTS.get(str(asked).lower()) if asked else None
     if hit:
-        ip   = "0.0.0.0"   # твоя функция
+        ip   = "0.0.0.0" 
         port = hit[1]
         tower_octets = _build_tower_ncacn_ip_tcp(asked, ver, ip, port)
         towers = [tower_octets]

@@ -291,7 +291,7 @@ class ndr_push_epm_Map:
     """
     Формирует EPM ept_map RESPONSE (NDR OUT) «как у Самбы».
 
-    build_out(...) -> bytes  — готовый stub, который кладёшь в MSRPC RESPONSE.
+    build_out(...) -> bytes  — stub
     """
 
     @staticmethod
