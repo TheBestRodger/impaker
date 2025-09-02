@@ -15,7 +15,7 @@ from utils_lsa import (
     _extract_request_stub_co,
 )
 from lsa_status import NCA_S_OP_RNG_ERROR
-from epm import ndr_pull_epm_Map
+from epm import ndr_pull_epm_Map, ndr_push_epm_Map
 
 EPM_OPNUM_EPT_INSERT             = 0
 EPM_OPNUM_EPT_DELETE             = 1
@@ -71,58 +71,37 @@ def _build_tower_ncacn_ip_tcp(iface_uuid: uuid.UUID, iface_ver_major: int, ip: s
     floors.append(_floor_single_octet(PID_IP, int(ipaddress.IPv4Address(ipstr)).to_bytes(4,'big')))
     return (len(floors)).to_bytes(2,'little') + b"".join(floors)
 
-
-def _ndr_pack_twr_t(tower_octets: bytes) -> bytes:
-    n = NDRPush()
-    tl = len(tower_octets)
-    n.u32(tl)
-    n.u32(tl)
-    n.raw(tower_octets)
-    while (n.off % 4) != 0:
-        n.u8(0)
-    buf = n.getvalue()
-    print(f"[EPM] _ndr_pack_twr_t: tower_len={tl}, total={len(buf)}, dump={_hexdump(buf)}")
-    return buf
-
-
-def _build_epm_map_stub_deferred(tower_octets: Optional[bytes], status: int, max_towers: int) -> bytes:
-    fixed = NDRPush()
-    deferred = NDRPush()
-
-    # fixed: ptr-indicators + scalar
-    fixed.u32(0x00020000)  # entry_handle*
-    fixed.u32(0x00020004)  # num_towers*
-    fixed.u32(0x00020008)  # ITowers*
-    fixed.u32(status)
-
-    # deferred: *entry_handle
-    deferred.u32(0)              # attrs
-    deferred.raw(b'\x00'*16)     # uuid
-
-    # deferred: *num_towers
-    num = 1 if tower_octets else 0
-    deferred.u32(num)
-
-    # deferred: *ITowers → header + ptrs + twr_t
-    mt = max(1, int(max_towers))
-    deferred.u32(mt)     # max_count (из запроса)
-    deferred.u32(0)      # offset
-    deferred.u32(num)    # actual_count
-    if num:
-        deferred.u32(0x0002000C)            # ptr на элемент 0
-        deferred.raw(_ndr_pack_twr_t(tower_octets))  # сам twr_t (nested deferred)
-
-    buf = fixed.getvalue() + deferred.getvalue()
-    print(f"[EPM] MAP stub_len={len(buf)} (num={num}, max_towers={mt})")
-    return buf
-
     
 def _op_dcesrv_epm_Map(server, req_hdr, stub_in: bytes) -> bytes:
+    # 1) Разбираем запрос (ты уже сделал)
     epm = ndr_pull_epm_Map(stub_in)
-    tower_octets = None
-    status = None
-    max_towers = epm.get_max_towers()
-    stub = _build_epm_map_stub_deferred(tower_octets, status, max_towers)
+    max_towers = epm.max_towers
+
+    # 2) Роутинг: есть ли у нас такая служба?
+    #    Если есть — строим свою башню (ncacn_ip_tcp), иначе возвращаем 0 башен и NOT_REGISTERED.
+    towers = []
+    status = EPM_S_NOT_REGISTERED
+
+    asked = epm.tower.iface_uuid   # UUID интерфейса из запроса
+    ver   = epm.tower.iface_ver_major or 1
+    hit = IFACE_PORTS.get(str(asked).lower()) if asked else None
+    if hit:
+        ip   = "0.0.0.0"   # твоя функция
+        port = hit[1]
+        tower_octets = _build_tower_ncacn_ip_tcp(asked, ver, ip, port)
+        towers = [tower_octets]
+        status = EPM_S_OK
+
+    # 3) Пушим OUT-стаб «как у Самбы»
+    stub = ndr_push_epm_Map().build_out(
+        entry_handle_attrs=0,
+        entry_handle_uuid16=None,   # нулевой handle ок
+        towers_octets=towers,       # [] если не нашли — num=0
+        max_towers=max_towers,      # коррелируем с запросом
+        status=status,
+    )
+
+    # 4) Оборачиваем в MSRPC RESPONSE CO
     ctx_id = req_hdr['ctx_id'] if 'ctx_id' in req_hdr.fields else req_hdr['p_cont_id']
     return _build_response_co(call_id=int(req_hdr['call_id']), ctx_id=int(ctx_id), stub=stub)
 

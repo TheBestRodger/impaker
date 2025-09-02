@@ -1,8 +1,10 @@
 # ndr_pull_epm_Map.py
 from dataclasses import dataclass
-from typing import Optional, List, Tuple, Dict
+from typing import Iterable, Optional, List, Tuple, Dict, Union
 import uuid
 import ipaddress
+
+from bind_parsers import NDRPush
 
 # ---------- минимальный NDR-пуллер (LE) ----------
 class _NDRPull:
@@ -282,3 +284,90 @@ class ndr_pull_epm_Map:
         for i, f in enumerate(self.tower.floors_list, 1):
             print(f"  floor#{i}: prot=0x{f.prot_id:02x}, lhs={f.lhs.hex(' ')}, rhs={f.rhs.hex(' ')}")
 
+
+
+
+class ndr_push_epm_Map:
+    """
+    Формирует EPM ept_map RESPONSE (NDR OUT) «как у Самбы».
+
+    build_out(...) -> bytes  — готовый stub, который кладёшь в MSRPC RESPONSE.
+    """
+
+    @staticmethod
+    def _bytes_le_guid(u: Union[uuid.UUID, bytes, bytearray, None]) -> bytes:
+        if u is None:
+            return b"\x00" * 16
+        if isinstance(u, uuid.UUID):
+            return u.bytes_le
+        b = bytes(u)
+        # если прислали GUID в «сетевом» порядке — предполагаем уже 16B
+        if len(b) != 16:
+            raise ValueError("entry_handle_uuid16 must be 16 bytes or uuid.UUID")
+        return b
+
+    @staticmethod
+    def _pack_twr_t(octets: bytes) -> bytes:
+        """twr_t = u32 len; u32 max_count(=len); octets[len]; align4"""
+        ndr = NDRPush()
+        nlen = len(octets)
+        ndr.u32(nlen)
+        ndr.u32(nlen)
+        ndr.raw(octets)
+        ndr.trailer_align4()
+        return ndr.getvalue()
+
+    def build_out(
+        self,
+        *,
+        entry_handle_attrs: int = 0,
+        entry_handle_uuid16: Union[uuid.UUID, bytes, bytearray, None] = None,
+        towers_octets: Optional[Iterable[Optional[bytes]]] = None,
+        max_towers: int = 1,
+        status: int = 0,
+    ) -> bytes:
+        """
+        :param entry_handle_attrs: u32 attrs для policy_handle
+        :param entry_handle_uuid16: GUID (uuid.UUID или 16 raw bytes, LE ожидается)
+        :param towers_octets: итерируемый список «октетов башни» (каждый — bytes twr_t.octets) или None → пусто
+        :param max_towers: значение size_is() (обычно берём из запроса)
+        :param status: error_status_t (EPM_S_OK=0, EPM_S_NOT_REGISTERED=0x16c9a0d6 и т.п.)
+        """
+        # нормализация входа
+        towers_list: List[Optional[bytes]] = list(towers_octets or [])
+        num = sum(1 for t in towers_list if t is not None)
+        if max_towers <= 0:
+            max_towers = 1
+
+        # === SCALARS (в ответе [ref] — payload inline) ===
+        ndr = NDRPush()
+
+        # policy_handle (20 байт): u32 attrs + GUID (NDR: bytes_le)
+        ndr.u32(entry_handle_attrs)
+        ndr.raw(self._bytes_le_guid(entry_handle_uuid16))
+        ndr.trailer_align4()
+
+        # *num_towers (payload, без указателя)
+        ndr.u32(num)
+
+        # Conformant+Varying header массива ITowers
+        # (uint3264→u32, uint3264→u32, uint3264→u32)
+        ndr.u32(max_towers)  # size (max_count)
+        ndr.u32(0)           # offset
+        ndr.u32(num)         # length (actual)
+
+        # SCALARS часть epm_twr_p_t: указательные индикаторы каждого элемента
+        # Ненулевые (любой уникальный) для присутствующих элементов, 0 — для None.
+        ref_base = 0x00020000
+        for i, t in enumerate(towers_list):
+            ndr.u32((ref_base + i * 4) if t is not None else 0)
+
+        # BUFFERS часть epm_twr_p_t: тела twr_t для каждого не-NULL
+        for t in towers_list:
+            if t is not None:
+                ndr.raw(self._pack_twr_t(t))
+
+        # Завершающий status
+        ndr.u32(status)
+
+        return ndr.getvalue()
