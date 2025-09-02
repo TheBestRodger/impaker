@@ -13,6 +13,7 @@ from bind_parsers import (
                 )
 from utils_lsa import _build_fault_co
 from epmapper import handle_epm_request
+from netlogon import handle_netr_request
 
 
 # UUID интерфейсов (abstract syntax), чтобы логировать/фильтровать
@@ -246,8 +247,7 @@ class RPCPipeTCPHandler(socketserver.BaseRequestHandler):
                         pass
                     elif service == "netlogon":
                         print("PROTOCOL - netlogon")
-                        # TODO: resp = handle_netlogon_request(...)
-                        pass
+                        resp = handle_netr_request(self.server, pdu)
                     elif service == "epmapper":
                         print("PROTOCOL - epmapper")
                         resp = handle_epm_request(self.server, pdu)

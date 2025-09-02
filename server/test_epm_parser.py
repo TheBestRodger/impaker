@@ -2,7 +2,7 @@
 import struct
 import uuid
 
-from epm import ndr_pull_epm_Map  # импортируй твой класс
+from works.ipacer.server.ndr_epm import ndr_pull_epm_Map  # импортируй твой класс
 
 NETLOGON = uuid.UUID("12345678-1234-abcd-ef00-01234567cffb")
 DCE_NDR  = uuid.UUID("8a885d04-1ceb-11c9-9fe8-08002b104860")

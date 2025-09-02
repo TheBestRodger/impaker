@@ -15,7 +15,7 @@ from utils_lsa import (
     _extract_request_stub_co,
 )
 from lsa_status import NCA_S_OP_RNG_ERROR
-from epm import ndr_pull_epm_Map, ndr_push_epm_Map
+from ndr_epm import ndr_pull_epm_Map, ndr_push_epm_Map
 
 EPM_OPNUM_EPT_INSERT             = 0
 EPM_OPNUM_EPT_DELETE             = 1
